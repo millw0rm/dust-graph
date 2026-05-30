@@ -230,44 +230,199 @@ def _extract_openapi(state: CollectorState, path: Path) -> None:
     data = _load_yaml_or_json(path)
     if not isinstance(data, dict) or "openapi" not in data and "swagger" not in data:
         return
+    source = _source(path)
     info = data.get("info") if isinstance(data.get("info"), dict) else {}
     title = str(info.get("title") or path.stem)
     version = str(info.get("version") or "unknown")
     api_id = f"api:{_slug(state.repo_name)}:{_slug(title)}:{_slug(version)}"
+    security_schemes = _openapi_security_schemes(data)
+    api_properties: dict[str, Any] = {"spec_path": source, "spec_format": path.suffix.lstrip("."), "version": version}
+    if security_schemes:
+        api_properties["security_schemes"] = sorted(security_schemes)
+        api_properties["security_scheme_types"] = sorted(
+            f"{name}:{scheme_type}"
+            for name, scheme_type in security_schemes.items()
+            if scheme_type
+        )
     _add_node(
         state,
         GraphNode(
             id=api_id,
             type="API",
             labels=["API"],
-            properties={"spec_path": _source(path), "spec_format": path.suffix.lstrip("."), "version": version},
-            metadata=_metadata(title, _source(path), 0.95),
+            properties=api_properties,
+            metadata=_metadata(title, source, 0.95),
         ),
     )
-    service = _add_service(state, _best_service_name(state), _source(path), 0.7)
-    _add_edge(state, "EXPOSES", service.id, api_id, _source(path), 0.95)
+    service = _add_service(state, _best_service_name(state), source, 0.7)
+    _add_edge(state, "EXPOSES", service.id, api_id, source, 0.95)
 
+    global_security = data.get("security") if isinstance(data.get("security"), list) else None
     paths = data.get("paths")
     if isinstance(paths, dict):
         for route, route_config in paths.items():
             if not isinstance(route, str) or not isinstance(route_config, dict):
                 continue
             for method, operation in route_config.items():
-                if method.lower() not in HTTP_METHODS:
+                method_normalized = method.lower()
+                if method_normalized not in HTTP_METHODS:
                     continue
-                operation_id = operation.get("operationId") if isinstance(operation, dict) else None
+                operation = operation if isinstance(operation, dict) else {}
+                operation_id = operation.get("operationId") if isinstance(operation.get("operationId"), str) else None
+                security_requirements = _openapi_operation_security(operation, global_security)
+                request_body_content_types = _openapi_request_body_content_types(operation)
+                response_status_codes = _openapi_response_status_codes(operation)
                 endpoint_id = f"endpoint:{_slug(state.repo_name)}:{_slug(method)}:{_slug(route)}"
+                properties: dict[str, Any] = {
+                    "path": route,
+                    "method": method.upper(),
+                    "operation_id": operation_id,
+                    "tags": _openapi_string_list(operation.get("tags")),
+                    "summary": operation.get("summary") if isinstance(operation.get("summary"), str) else None,
+                    "security_requirements": security_requirements,
+                    "request_body_content_types": request_body_content_types,
+                    "response_status_codes": response_status_codes,
+                    "source_path": source,
+                }
+                requirement_details = _openapi_permission_metadata(
+                    state=state,
+                    api_id=api_id,
+                    endpoint_id=endpoint_id,
+                    security_requirements=security_requirements,
+                    security_schemes=security_schemes,
+                    source=source,
+                )
+                properties.update(requirement_details)
                 _add_node(
                     state,
                     GraphNode(
                         id=endpoint_id,
                         type="APIEndpoint",
                         labels=["APIEndpoint"],
-                        properties={"path": route, "method": method.upper(), "operation_id": operation_id},
-                        metadata=_metadata(f"{method.upper()} {route}", _source(path), 0.95),
+                        properties=properties,
+                        metadata=_metadata(f"{method.upper()} {route}", source, 0.95),
                     ),
                 )
-                _add_edge(state, "HAS_ENDPOINT", api_id, endpoint_id, _source(path), 0.95)
+                _add_edge(state, "HAS_ENDPOINT", api_id, endpoint_id, source, 0.95)
+
+
+def _openapi_security_schemes(data: dict[str, Any]) -> dict[str, str]:
+    components = data.get("components") if isinstance(data.get("components"), dict) else {}
+    security_schemes = components.get("securitySchemes") if isinstance(components.get("securitySchemes"), dict) else None
+    if security_schemes is None:
+        security_schemes = data.get("securityDefinitions") if isinstance(data.get("securityDefinitions"), dict) else {}
+    schemes: dict[str, str] = {}
+    for name, scheme in security_schemes.items():
+        if not isinstance(name, str) or not isinstance(scheme, dict):
+            continue
+        scheme_type = scheme.get("type")
+        schemes[name] = str(scheme_type) if scheme_type is not None else "unknown"
+    return schemes
+
+
+def _openapi_operation_security(operation: dict[str, Any], global_security: list[Any] | None) -> list[str]:
+    security = operation.get("security") if "security" in operation else global_security
+    if security is None:
+        return []
+    requirements: list[str] = []
+    if not isinstance(security, list):
+        return requirements
+    for requirement in security:
+        if not isinstance(requirement, dict):
+            continue
+        if not requirement:
+            requirements.append("anonymous")
+            continue
+        for scheme_name, scopes in requirement.items():
+            if not isinstance(scheme_name, str):
+                continue
+            scope_values = _openapi_string_list(scopes)
+            if scope_values:
+                requirements.extend(f"{scheme_name}:{scope}" for scope in scope_values)
+            else:
+                requirements.append(scheme_name)
+    return sorted(dict.fromkeys(requirements))
+
+
+def _openapi_request_body_content_types(operation: dict[str, Any]) -> list[str]:
+    request_body = operation.get("requestBody")
+    if not isinstance(request_body, dict):
+        return []
+    content = request_body.get("content")
+    if not isinstance(content, dict):
+        return []
+    return sorted(str(content_type) for content_type in content if isinstance(content_type, str))
+
+
+def _openapi_response_status_codes(operation: dict[str, Any]) -> list[str]:
+    responses = operation.get("responses")
+    if not isinstance(responses, dict):
+        return []
+    return sorted(str(status_code) for status_code in responses if isinstance(status_code, str | int))
+
+
+def _openapi_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _openapi_permission_metadata(
+    *,
+    state: CollectorState,
+    api_id: str,
+    endpoint_id: str,
+    security_requirements: list[str],
+    security_schemes: dict[str, str],
+    source: str,
+) -> dict[str, Any]:
+    if not security_requirements:
+        return {}
+    permission_ids: list[str] = []
+    scheme_names: set[str] = set()
+    scope_names: set[str] = set()
+    for requirement in security_requirements:
+        if requirement == "anonymous":
+            continue
+        scheme_name, _, scope_name = requirement.partition(":")
+        scheme_names.add(scheme_name)
+        if scope_name:
+            scope_names.add(scope_name)
+        permission_id = f"permission:{_slug(api_id)}:{_slug(scheme_name)}"
+        if scope_name:
+            permission_id = f"{permission_id}:{_slug(scope_name)}"
+        permission_ids.append(permission_id)
+        permission_name = f"{scheme_name}:{scope_name}" if scope_name else scheme_name
+        permission_properties: dict[str, Any] = {
+            "name": permission_name,
+            "source_path": source,
+            "openapi_security_scheme": scheme_name,
+            "openapi_security_requirement": requirement,
+            "api_id": api_id,
+        }
+        scheme_type = security_schemes.get(scheme_name)
+        if scheme_type:
+            permission_properties["openapi_security_scheme_type"] = scheme_type
+        if scope_name:
+            permission_properties["openapi_security_scope"] = scope_name
+        _add_node(
+            state,
+            GraphNode(
+                id=permission_id,
+                type="Permission",
+                labels=["Permission"],
+                properties=permission_properties,
+                metadata=_metadata(permission_name, source, 0.9),
+            ),
+        )
+        _add_edge(state, "CAN_CALL", permission_id, endpoint_id, source, 0.85)
+    metadata: dict[str, Any] = {
+        "required_permission_ids": sorted(dict.fromkeys(permission_ids)),
+        "security_schemes": sorted(scheme_names),
+    }
+    if scope_names:
+        metadata["security_scopes"] = sorted(scope_names)
+    return metadata
 
 
 def _extract_kubernetes(state: CollectorState, path: Path) -> None:
