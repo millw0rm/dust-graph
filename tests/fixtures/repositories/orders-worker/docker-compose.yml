@@ -1,0 +1,5 @@
+services:
+  orders-worker:
+    image: ghcr.io/acme/orders-worker:2.0.0
+    ports:
+      - "9090:9090"

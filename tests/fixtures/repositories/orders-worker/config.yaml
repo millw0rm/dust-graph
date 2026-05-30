@@ -1,0 +1,5 @@
+service:
+  name: orders-worker
+postgres_database: orders
+rabbitmq_queue: orders.created
+payments_topic: payments.events
