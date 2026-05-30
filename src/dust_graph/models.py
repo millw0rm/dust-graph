@@ -31,9 +31,12 @@ class GraphMetadata(BaseModel):
     name: str | None = None
     description: str | None = None
     owner: str | None = None
+    source_system: str | None = Field(default=None, min_length=1)
+    source_ref: str | None = Field(default=None, min_length=1)
     environment: str | None = None
     first_seen: datetime | None = None
     last_seen: datetime | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
     tags: list[str] = Field(default_factory=list)
     evidence: list[SourceEvidence] = Field(default_factory=list)
 
