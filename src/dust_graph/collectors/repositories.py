@@ -21,7 +21,7 @@ import yaml
 from dust_graph.models import GraphEdge, GraphFixture, GraphMetadata, GraphNode, SourceEvidence
 
 OPENAPI_FILE_NAMES = {"openapi.yaml", "openapi.yml", "swagger.yaml", "swagger.json"}
-K8S_KINDS = {"Deployment", "Service", "Ingress", "Namespace", "ServiceAccount", "ConfigMap"}
+K8S_KINDS = {"Deployment", "Service", "Ingress", "Namespace", "ServiceAccount", "NetworkPolicy", "ConfigMap"}
 CONFIG_FILE_NAMES = {
     ".env",
     "app.env",
@@ -75,6 +75,43 @@ SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "dist", "bu
 
 
 @dataclass
+class K8sWorkloadRef:
+    id: str
+    name: str
+    namespace: str
+    labels: dict[str, str]
+    source: str
+
+
+@dataclass
+class K8sServiceRef:
+    id: str
+    name: str
+    namespace: str
+    selector: dict[str, str]
+    source: str
+
+
+@dataclass
+class K8sIngressBackendRef:
+    ingress_id: str
+    service_name: str
+    namespace: str
+    source: str
+
+
+@dataclass
+class K8sNetworkPolicyRef:
+    id: str
+    namespace: str
+    pod_selector: dict[str, str]
+    policy_types: set[str]
+    ingress_rule_count: int
+    egress_rule_count: int
+    source: str
+
+
+@dataclass
 class CollectorState:
     root: Path
     repo_name: str
@@ -84,6 +121,10 @@ class CollectorState:
     nodes: dict[str, GraphNode] = field(default_factory=dict)
     edges: dict[str, GraphEdge] = field(default_factory=dict)
     ci_workflows: set[str] = field(default_factory=set)
+    k8s_workloads: dict[str, K8sWorkloadRef] = field(default_factory=dict)
+    k8s_services: dict[str, K8sServiceRef] = field(default_factory=dict)
+    k8s_ingress_backends: list[K8sIngressBackendRef] = field(default_factory=list)
+    k8s_network_policies: dict[str, K8sNetworkPolicyRef] = field(default_factory=dict)
 
 
 def collect_repository(path: str | Path) -> GraphFixture:
@@ -437,53 +478,267 @@ def _extract_kubernetes(state: CollectorState, path: Path) -> None:
         if not isinstance(name, str):
             continue
         namespace = metadata.get("namespace") if isinstance(metadata.get("namespace"), str) else None
-        namespace_id = None
-        if namespace or kind == "Namespace":
-            namespace_name = namespace or name
-            namespace_id = f"namespace:{_slug(namespace_name)}"
+        namespace_name = namespace or (name if kind == "Namespace" else "default")
+        namespace_id = _add_k8s_namespace(state, namespace_name, path)
+
+        if kind == "Namespace":
+            continue
+        if kind == "Service":
+            _extract_k8s_service(state, document, name, namespace_name, namespace_id, path)
+        elif kind == "Deployment":
+            _extract_k8s_deployment(state, document, name, namespace_name, namespace_id, path)
+        elif kind == "Ingress":
+            _extract_k8s_ingress(state, document, name, namespace_name, namespace_id, path)
+        elif kind == "NetworkPolicy":
+            _extract_k8s_network_policy(state, document, name, namespace_name, namespace_id, path)
+        else:
+            node_type = "ServiceAccount" if kind == "ServiceAccount" else kind
+            node_id = _k8s_resource_id(node_type, namespace_name, name)
             _add_node(
                 state,
                 GraphNode(
-                    id=namespace_id,
-                    type="Namespace",
-                    labels=["Namespace"],
-                    properties={"name": namespace_name, "source_path": _source(path)},
-                    metadata=_metadata(namespace_name, _source(path), 0.95),
+                    id=node_id,
+                    type=node_type,
+                    labels=[node_type],
+                    properties={"name": name, "namespace": namespace_name, "source_path": _source(path)},
+                    metadata=_metadata(name, _source(path), 0.9),
                 ),
             )
-        if kind == "Service":
-            node_id = f"k8sservice:{_slug(namespace or 'default')}:{_slug(name)}"
-            _add_node(state, GraphNode(id=node_id, type="K8sService", labels=["K8sService"], properties={"name": name, "namespace": namespace}, metadata=_metadata(name, _source(path), 0.95)))
-            service = _add_service(state, name, _source(path), 0.85)
-            _remember_service(state, name, _source(path))
-            _add_edge(state, "DEPLOYS_TO", service.id, node_id, _source(path), 0.8)
-            if namespace_id:
-                _add_edge(state, "DEPLOYS_TO", node_id, namespace_id, _source(path), 0.9)
-            spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
-            ports = spec.get("ports") if isinstance(spec.get("ports"), list) else []
-            for port_obj in ports:
-                if isinstance(port_obj, dict) and port_obj.get("port") is not None:
-                    _add_port(state, node_id, str(port_obj["port"]), _source(path), protocol=str(port_obj.get("protocol", "TCP")))
-        elif kind == "Deployment":
-            service = _add_service(state, name, _source(path), 0.9)
-            _remember_service(state, name, _source(path))
-            if namespace_id:
-                _add_edge(state, "DEPLOYS_TO", service.id, namespace_id, _source(path), 0.9)
-            sa_name = _nested_get(document, ["spec", "template", "spec", "serviceAccountName"])
-            if isinstance(sa_name, str):
-                sa_id = f"serviceaccount:{_slug(namespace or 'default')}:{_slug(sa_name)}"
-                _add_node(state, GraphNode(id=sa_id, type="ServiceAccount", labels=["ServiceAccount"], properties={"name": sa_name, "namespace": namespace}, metadata=_metadata(sa_name, _source(path), 0.9)))
-                _add_edge(state, "RUNS_AS", service.id, sa_id, _source(path), 0.9)
-            for image in _deployment_images(document):
-                images = service.properties.setdefault("container_images", [])
-                if isinstance(images, list) and image not in images:
-                    images.append(image)
-        else:
-            node_type = "ServiceAccount" if kind == "ServiceAccount" else kind
-            node_id = f"{_slug(node_type)}:{_slug(namespace or 'default')}:{_slug(name)}"
-            _add_node(state, GraphNode(id=node_id, type=node_type, labels=[node_type], properties={"name": name, "namespace": namespace, "source_path": _source(path)}, metadata=_metadata(name, _source(path), 0.9)))
-            if namespace_id and node_id != namespace_id:
+            if node_id != namespace_id:
                 _add_edge(state, "DEPLOYS_TO", node_id, namespace_id, _source(path), 0.8)
+        _reconcile_k8s_relationships(state)
+
+
+def _extract_k8s_service(
+    state: CollectorState,
+    document: dict[str, Any],
+    name: str,
+    namespace: str,
+    namespace_id: str,
+    path: Path,
+) -> None:
+    source = _source(path)
+    node_id = _k8s_resource_id("K8sService", namespace, name)
+    spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
+    selector = _string_dict(spec.get("selector"))
+    properties: dict[str, Any] = {"name": name, "namespace": namespace, "source_path": source}
+    if selector:
+        properties["selector"] = selector
+    _add_node(
+        state,
+        GraphNode(
+            id=node_id,
+            type="K8sService",
+            labels=["K8sService"],
+            properties=properties,
+            metadata=_metadata(name, source, 0.95),
+        ),
+    )
+    state.k8s_services[node_id] = K8sServiceRef(id=node_id, name=name, namespace=namespace, selector=selector, source=source)
+    service = _add_service(state, name, source, 0.85)
+    _remember_service(state, name, source)
+    _add_edge(state, "DEPLOYS_TO", service.id, node_id, source, 0.8)
+    _add_edge(state, "DEPLOYS_TO", node_id, namespace_id, source, 0.9)
+    ports = spec.get("ports") if isinstance(spec.get("ports"), list) else []
+    for port_obj in ports:
+        if not isinstance(port_obj, dict):
+            continue
+        protocol = str(port_obj.get("protocol", "TCP"))
+        if port_obj.get("port") is not None:
+            _add_port(state, node_id, str(port_obj["port"]), source, protocol=protocol)
+        if port_obj.get("targetPort") is not None:
+            _add_port(state, node_id, str(port_obj["targetPort"]), source, protocol=protocol)
+
+
+def _extract_k8s_deployment(
+    state: CollectorState,
+    document: dict[str, Any],
+    name: str,
+    namespace: str,
+    namespace_id: str,
+    path: Path,
+) -> None:
+    source = _source(path)
+    node_id = _k8s_resource_id("K8sDeployment", namespace, name)
+    template_labels = _string_dict(_nested_get(document, ["spec", "template", "metadata", "labels"]))
+    metadata = document.get("metadata") if isinstance(document.get("metadata"), dict) else {}
+    labels = template_labels or _string_dict(metadata.get("labels"))
+    properties: dict[str, Any] = {"name": name, "namespace": namespace, "source_path": source}
+    if labels:
+        properties["labels"] = labels
+    replicas = _nested_get(document, ["spec", "replicas"])
+    if isinstance(replicas, int):
+        properties["replicas"] = replicas
+    _add_node(
+        state,
+        GraphNode(
+            id=node_id,
+            type="K8sDeployment",
+            labels=["K8sDeployment"],
+            properties=properties,
+            metadata=_metadata(name, source, 0.95),
+        ),
+    )
+    state.k8s_workloads[node_id] = K8sWorkloadRef(id=node_id, name=name, namespace=namespace, labels=labels, source=source)
+    service = _add_service(state, name, source, 0.9)
+    _remember_service(state, name, source)
+    _add_edge(state, "DEPLOYS_TO", service.id, node_id, source, 0.9)
+    _add_edge(state, "DEPLOYS_TO", node_id, namespace_id, source, 0.9)
+    sa_name = _nested_get(document, ["spec", "template", "spec", "serviceAccountName"])
+    if not isinstance(sa_name, str):
+        sa_name = _nested_get(document, ["spec", "template", "spec", "serviceAccount"])
+    if isinstance(sa_name, str):
+        sa_id = _k8s_resource_id("ServiceAccount", namespace, sa_name)
+        _add_node(
+            state,
+            GraphNode(
+                id=sa_id,
+                type="ServiceAccount",
+                labels=["ServiceAccount"],
+                properties={"name": sa_name, "namespace": namespace, "source_path": source},
+                metadata=_metadata(sa_name, source, 0.9),
+            ),
+        )
+        _add_edge(state, "RUNS_AS", node_id, sa_id, source, 0.9)
+        # Keep the repository-level service principal linked for current consumers.
+        _add_edge(state, "RUNS_AS", service.id, sa_id, source, 0.85)
+    for image in _deployment_images(document):
+        images = service.properties.setdefault("container_images", [])
+        if isinstance(images, list) and image not in images:
+            images.append(image)
+    for port_obj in _container_ports(document):
+        protocol = str(port_obj.get("protocol", "TCP"))
+        if port_obj.get("containerPort") is not None:
+            _add_port(state, node_id, str(port_obj["containerPort"]), source, protocol=protocol)
+
+
+def _extract_k8s_ingress(
+    state: CollectorState,
+    document: dict[str, Any],
+    name: str,
+    namespace: str,
+    namespace_id: str,
+    path: Path,
+) -> None:
+    source = _source(path)
+    node_id = _k8s_resource_id("Ingress", namespace, name)
+    hosts = _ingress_hosts(document)
+    properties: dict[str, Any] = {"name": name, "namespace": namespace, "source_path": source}
+    if hosts:
+        properties["hosts"] = hosts
+    _add_node(
+        state,
+        GraphNode(
+            id=node_id,
+            type="Ingress",
+            labels=["Ingress"],
+            properties=properties,
+            metadata=_metadata(name, source, 0.9),
+        ),
+    )
+    _add_edge(state, "DEPLOYS_TO", node_id, namespace_id, source, 0.8)
+    for service_name, service_port in _ingress_service_backends(document):
+        state.k8s_ingress_backends.append(
+            K8sIngressBackendRef(ingress_id=node_id, service_name=service_name, namespace=namespace, source=source)
+        )
+        if service_port is not None:
+            _add_port(state, node_id, str(service_port), source, protocol="TCP")
+
+
+def _extract_k8s_network_policy(
+    state: CollectorState,
+    document: dict[str, Any],
+    name: str,
+    namespace: str,
+    namespace_id: str,
+    path: Path,
+) -> None:
+    source = _source(path)
+    node_id = _k8s_resource_id("NetworkPolicy", namespace, name)
+    spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
+    pod_selector = _string_dict(_nested_get(spec, ["podSelector", "matchLabels"]))
+    ingress_rules = spec.get("ingress") if isinstance(spec.get("ingress"), list) else []
+    egress_rules = spec.get("egress") if isinstance(spec.get("egress"), list) else []
+    policy_types = {str(item) for item in spec.get("policyTypes", []) if isinstance(item, str)}
+    if not policy_types:
+        policy_types = {"Ingress"}
+        if egress_rules:
+            policy_types.add("Egress")
+    properties: dict[str, Any] = {
+        "name": name,
+        "namespace": namespace,
+        "source_path": source,
+        "policy_types": sorted(policy_types),
+        "ingress_rule_count": len(ingress_rules),
+        "egress_rule_count": len(egress_rules),
+    }
+    if pod_selector:
+        properties["pod_selector"] = pod_selector
+    _add_node(
+        state,
+        GraphNode(
+            id=node_id,
+            type="NetworkPolicy",
+            labels=["NetworkPolicy"],
+            properties=properties,
+            metadata=_metadata(name, source, 0.9),
+        ),
+    )
+    _add_edge(state, "DEPLOYS_TO", node_id, namespace_id, source, 0.8)
+    state.k8s_network_policies[node_id] = K8sNetworkPolicyRef(
+        id=node_id,
+        namespace=namespace,
+        pod_selector=pod_selector,
+        policy_types=policy_types,
+        ingress_rule_count=len(ingress_rules),
+        egress_rule_count=len(egress_rules),
+        source=source,
+    )
+    for port_obj in _network_policy_ports(document):
+        protocol = str(port_obj.get("protocol", "TCP"))
+        if port_obj.get("port") is not None:
+            _add_port(state, node_id, str(port_obj["port"]), source, protocol=protocol)
+
+
+def _reconcile_k8s_relationships(state: CollectorState) -> None:
+    for service in state.k8s_services.values():
+        if not service.selector:
+            continue
+        for workload in state.k8s_workloads.values():
+            if service.namespace == workload.namespace and _labels_match_selector(workload.labels, service.selector):
+                _add_edge(state, "ROUTES_TO", service.id, workload.id, service.source, 0.9)
+    for backend in state.k8s_ingress_backends:
+        service_id = _k8s_resource_id("K8sService", backend.namespace, backend.service_name)
+        if service_id in state.nodes:
+            _add_edge(state, "ROUTES_TO", backend.ingress_id, service_id, backend.source, 0.9)
+    for policy in state.k8s_network_policies.values():
+        matched_workloads = [
+            workload
+            for workload in state.k8s_workloads.values()
+            if policy.namespace == workload.namespace and _labels_match_selector(workload.labels, policy.pod_selector)
+        ]
+        for workload in matched_workloads:
+            if ("Ingress" in policy.policy_types and policy.ingress_rule_count == 0) or (
+                "Egress" in policy.policy_types and policy.egress_rule_count == 0
+            ):
+                _add_edge(state, "DENIES", policy.id, workload.id, policy.source, 0.85)
+            if policy.ingress_rule_count > 0 or policy.egress_rule_count > 0:
+                _add_edge(state, "ALLOWS", policy.id, workload.id, policy.source, 0.8)
+
+
+def _add_k8s_namespace(state: CollectorState, namespace: str, path: Path) -> str:
+    namespace_id = f"namespace:{_slug(namespace)}"
+    _add_node(
+        state,
+        GraphNode(
+            id=namespace_id,
+            type="Namespace",
+            labels=["Namespace"],
+            properties={"name": namespace, "source_path": _source(path)},
+            metadata=_metadata(namespace, _source(path), 0.95),
+        ),
+    )
+    return namespace_id
 
 
 def _extract_config_hints(state: CollectorState, path: Path) -> None:
@@ -613,6 +868,95 @@ def _deployment_images(document: dict[str, Any]) -> Iterator[str]:
         for container in containers:
             if isinstance(container, dict) and isinstance(container.get("image"), str):
                 yield container["image"]
+
+
+def _container_ports(document: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    containers = _nested_get(document, ["spec", "template", "spec", "containers"])
+    if not isinstance(containers, list):
+        return
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        ports = container.get("ports")
+        if not isinstance(ports, list):
+            continue
+        for port_obj in ports:
+            if isinstance(port_obj, dict):
+                yield port_obj
+
+
+def _ingress_hosts(document: dict[str, Any]) -> list[str]:
+    hosts: list[str] = []
+    for rule in _nested_list(document, ["spec", "rules"]):
+        if isinstance(rule, dict) and isinstance(rule.get("host"), str) and rule["host"] not in hosts:
+            hosts.append(rule["host"])
+    return hosts
+
+
+def _ingress_service_backends(document: dict[str, Any]) -> Iterator[tuple[str, str | int | None]]:
+    default_backend = _nested_get(document, ["spec", "backend", "service"])
+    if isinstance(default_backend, dict):
+        service_name = default_backend.get("name")
+        if isinstance(service_name, str):
+            yield service_name, _ingress_backend_port(default_backend)
+    for rule in _nested_list(document, ["spec", "rules"]):
+        paths = _nested_get(rule, ["http", "paths"]) if isinstance(rule, dict) else None
+        if not isinstance(paths, list):
+            continue
+        for path_obj in paths:
+            service_backend = _nested_get(path_obj, ["backend", "service"]) if isinstance(path_obj, dict) else None
+            if isinstance(service_backend, dict) and isinstance(service_backend.get("name"), str):
+                yield service_backend["name"], _ingress_backend_port(service_backend)
+
+
+def _ingress_backend_port(service_backend: dict[str, Any]) -> str | int | None:
+    port = service_backend.get("port")
+    if not isinstance(port, dict):
+        return None
+    number = port.get("number")
+    if isinstance(number, int):
+        return number
+    name = port.get("name")
+    return name if isinstance(name, str) else None
+
+
+def _network_policy_ports(document: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    for section in ("ingress", "egress"):
+        for rule in _nested_list(document, ["spec", section]):
+            ports = rule.get("ports") if isinstance(rule, dict) else None
+            if not isinstance(ports, list):
+                continue
+            for port_obj in ports:
+                if isinstance(port_obj, dict):
+                    yield port_obj
+
+
+def _nested_list(data: dict[str, Any], keys: list[str]) -> list[Any]:
+    value = _nested_get(data, keys)
+    return value if isinstance(value, list) else []
+
+
+def _string_dict(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): str(item) for key, item in value.items() if isinstance(key, str) and isinstance(item, str)}
+
+
+def _labels_match_selector(labels: dict[str, str], selector: dict[str, str]) -> bool:
+    return all(labels.get(key) == value for key, value in selector.items())
+
+
+def _k8s_resource_id(node_type: str, namespace: str, name: str) -> str:
+    prefix_by_type = {
+        "K8sDeployment": "k8sdeployment",
+        "K8sService": "k8sservice",
+        "Ingress": "ingress",
+        "NetworkPolicy": "networkpolicy",
+        "ServiceAccount": "serviceaccount",
+        "ConfigMap": "configmap",
+    }
+    prefix = prefix_by_type.get(node_type, _slug(node_type))
+    return f"{prefix}:{_slug(namespace)}:{_slug(name)}"
 
 
 def _nested_get(data: dict[str, Any], keys: list[str]) -> Any:
