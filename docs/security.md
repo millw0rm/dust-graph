@@ -55,3 +55,52 @@ evidence:
   summary: redacted authentication failure count
   raw_log_stored: false
 ```
+
+## Repository Collector Config Redaction Examples
+
+Repository configuration files such as `.env`, `application.yml`, and `config.yaml` may contain dependency hints, but collector output must never contain the raw source value. Examples of forbidden raw values include:
+
+- `DATABASE_URL=postgres://user:password@db.internal:5432/payments`
+- `Authorization: Bearer eyJ...`
+- API keys such as `sk_live_...`, `ghp_...`, or tenant-specific long random tokens.
+- PEM/private-key material such as `-----BEGIN PRIVATE KEY----- ...`.
+- Cookie/session headers, credential blobs, JWT-like strings, and DSNs with usernames or passwords.
+- Topic, queue, database, or service values that are secret-like, token-like, or appear under sensitive keys such as `SECRET_TOPIC`, `PASSWORD_QUEUE`, or `API_KEY`.
+
+Allowed redacted metadata is limited to values that are useful for graph relationships without exposing the source secret, for example:
+
+```yaml
+database:
+  config_key: DATABASE_URL
+  value_redacted: true
+  redaction_reason: sensitive_config_value
+  engine: postgres
+  scheme: postgres
+  host: db.internal
+  port: 5432
+  database_name: payments
+```
+
+```yaml
+broker:
+  config_key: BROKER_URL
+  value_redacted: true
+  redaction_reason: config_value_minimized
+  broker_type: kafka
+  scheme: kafka
+  host: broker.internal
+  port: 9092
+```
+
+```yaml
+api_endpoint_hint:
+  config_key: PAYMENTS_API_URL
+  value_redacted: true
+  redaction_reason: sensitive_config_value
+  scheme: https
+  host: payments.internal
+  port: 8443
+  resource_name: payments
+```
+
+Safe resource names such as `payments.events` or `orders.created` may be retained only after key and value classification determines they are not secret-like. Otherwise the collector keeps the config key and redaction reason but omits the resource value.

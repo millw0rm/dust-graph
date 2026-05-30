@@ -150,3 +150,70 @@ def test_repository_collector_creates_openapi_access_metadata_for_secured_endpoi
     assert {evidence.source_id for evidence in oauth_permission.metadata.evidence} == {openapi_path}
     assert (oauth_permission.id, "CAN_CALL", get_endpoint.id) in edge_types
     assert (api_key_permission.id, "CAN_CALL", post_endpoint.id) in edge_types
+
+
+def test_repository_collector_redacts_sensitive_config_values_from_serialized_output() -> None:
+    fixture = collect_repository(FIXTURE_ROOT / "sensitive-config")
+    serialized = fixture.model_dump_json()
+
+    forbidden_values = [
+        "FakePassword123!",
+        "AnotherFakePassword456!",
+        "YetAnotherFakePassword789!",
+        "apiuser",
+        "dbuser",
+        "brokeruser",
+        "fake-query-token",
+        "Bearer fake-bearer-token-1234567890abcdef",
+        "fake-api-key-1234567890abcdef",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+        "fakeSignatureValue1234567890",
+        "-----BEGIN PRIVATE KEY-----",
+        "fake-private-key-material",
+        "topic-secret-looking-1234567890abcdef",
+        "queue-secret-looking-abcdef1234567890",
+        "QWxhZGRpbjpPcGVuU2VzYW1lVG9rZW4xMjM0NTY3ODkw",
+        "postgres://dbuser:FakePassword123!@db.safe.internal:5432/customerdb",
+        "amqp://brokeruser:AnotherFakePassword456!@rabbit.safe.internal:5672/vhost",
+        "https://apiuser:YetAnotherFakePassword789!@payments.safe.internal:8443/v1/payments",
+    ]
+    for forbidden in forbidden_values:
+        assert forbidden not in serialized
+
+
+def test_repository_collector_preserves_safe_redacted_config_metadata() -> None:
+    fixture = collect_repository(FIXTURE_ROOT / "sensitive-config")
+
+    database = next(node for node in fixture.nodes if node.type == "Database")
+    assert database.properties["engine"] == "postgres"
+    assert database.properties["config_key"] == "DATABASE_URL"
+    assert database.properties["host"] == "db.safe.internal"
+    assert database.properties["port"] == 5432
+    assert database.properties["database_name"] == "customerdb"
+    assert database.properties["scheme"] == "postgres"
+    assert database.properties["value_redacted"] is True
+    assert database.properties["redaction_reason"] == "sensitive_config_value"
+
+    broker = next(node for node in fixture.nodes if node.type == "Broker")
+    assert broker.properties["broker_type"] == "amqp"
+    assert broker.properties["config_key"] == "BROKER_URL"
+    assert broker.properties["host"] == "rabbit.safe.internal"
+    assert broker.properties["port"] == 5672
+    assert broker.properties["resource_name"] == "vhost"
+    assert broker.properties["value_redacted"] is True
+
+    endpoint = next(node for node in fixture.nodes if node.id == "endpointref:sensitive-config:payments_api_url")
+    assert endpoint.properties["config_key"] == "PAYMENTS_API_URL"
+    assert endpoint.properties["scheme"] == "https"
+    assert endpoint.properties["host"] == "payments.safe.internal"
+    assert endpoint.properties["port"] == 8443
+    assert endpoint.properties["resource_name"] == "payments"
+    assert endpoint.properties["value_redacted"] is True
+    assert endpoint.properties["redaction_reason"] == "sensitive_config_value"
+
+    safe_topic = next(node for node in fixture.nodes if node.id == "topic:safe_topic")
+    assert safe_topic.properties["topic_name"] == "public.events"
+    assert safe_topic.properties["value_redacted"] is True
+
+    secret_topic = next(node for node in fixture.nodes if node.id == "topic:secret_topic")
+    assert "topic_name" not in secret_topic.properties
