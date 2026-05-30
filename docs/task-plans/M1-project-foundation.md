@@ -24,7 +24,7 @@ M1 work is limited to foundational scaffolding and early contracts:
 | 2 | Add package/tooling files. | `done` | Added `pyproject.toml` with package metadata, console script, runtime dependencies, pytest configuration, and dev test dependency. |
 | 3 | Create graph-core model definitions. | `done` | Added Pydantic models for source evidence, graph metadata, nodes, edges, and importable graph fixtures in `src/dust_graph/models.py`. |
 | 4 | Create graph adapter interface. | `done` | Added `GraphAdapter` protocol with `upsert_node`, `upsert_edge`, `bulk_import`, and `query` in `src/dust_graph/adapter.py`. |
-| 5 | Create Kuzu adapter skeleton. | `pending` | Deferred intentionally: the current runnable foundation stabilizes the in-memory adapter first; Kuzu remains the next adapter after this contract is exercised. |
+| 5 | Create Kuzu adapter skeleton. | `done` | Added `KuzuGraphAdapter` in `src/dust_graph/adapters/kuzu.py`, kept `kuzu` optional, and covered importability plus optional-dependency behavior in `tests/test_kuzu_adapter.py`. |
 | 6 | Create CLI skeleton. | `done` | Added the `dust-graph` Typer entry point with `validate-fixture` and `import-fixture` commands in `src/dust_graph/cli.py`. |
 | 7 | Add sample fixture format. | `done` | Added `fixtures/sample_graph.yaml`, a YAML fixture with graph metadata, nodes, edges, properties, and evidence. |
 | 8 | Add one sample import command design. | `done` | Implemented `dust-graph import-fixture fixtures/sample_graph.yaml`, which loads a fixture into the in-memory adapter and reports imported counts. |
@@ -51,7 +51,7 @@ Future tasks should update task-plan files as part of the same change that perfo
 
 ## Next Adapter Note
 
-Kuzu should be introduced after the in-memory adapter has enough exercised behavior to define a stable persistence contract. The first Kuzu task should implement the existing `GraphAdapter` protocol rather than changing callers to depend on Kuzu-specific APIs.
+Kuzu has been introduced as an optional adapter skeleton after the in-memory adapter contract was exercised. The initial implementation follows the existing `GraphAdapter` protocol and avoids changing callers to depend on Kuzu-specific APIs.
 
 ## Out of Scope
 
