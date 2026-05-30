@@ -10,6 +10,9 @@ nodes:
     metadata:
       name: dust-api
       owner: platform-team
+      source_system: fixture
+      source_ref: fixtures/sample_graph.yaml#repo
+      confidence: 1.0
       tags: [sample]
       evidence:
         - source: fixture
@@ -21,24 +24,36 @@ nodes:
     metadata:
       name: dust-api
       owner: platform-team
+      source_system: fixture
+      source_ref: fixtures/sample_graph.yaml#service
       environment: dev
+      confidence: 1.0
       tags: [sample]
   - id: api:dust-api-public
     type: API
     labels: [API]
     metadata:
       name: Dust API Public
+      source_system: fixture
+      source_ref: fixtures/sample_graph.yaml#api
       environment: dev
+      confidence: 1.0
   - id: team:platform
     type: Group
     labels: [Group]
     metadata:
       name: platform-team
+      source_system: fixture
+      source_ref: fixtures/sample_graph.yaml#team
+      confidence: 1.0
 edges:
   - type: OWNS
     source: team:platform
     target: service:dust-api
     metadata:
+      source_system: fixture
+      source_ref: fixtures/sample_graph.yaml#owns
+      confidence: 1.0
       evidence:
         - source: fixture
           source_id: fixtures/sample_graph.yaml#owns
@@ -46,6 +61,14 @@ edges:
   - type: DEPLOYS_TO
     source: repo:dust-api
     target: service:dust-api
+    metadata:
+      source_system: fixture
+      source_ref: fixtures/sample_graph.yaml#deploys-to
+      confidence: 1.0
   - type: EXPOSES
     source: service:dust-api
     target: api:dust-api-public
+    metadata:
+      source_system: fixture
+      source_ref: fixtures/sample_graph.yaml#exposes
+      confidence: 1.0

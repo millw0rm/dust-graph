@@ -88,6 +88,9 @@ node_types:
   NetworkPolicy:
     metadata: common_metadata
     description: Kubernetes NetworkPolicy or equivalent traffic policy.
+  ConfigMap:
+    metadata: common_metadata
+    description: Kubernetes ConfigMap or equivalent non-secret configuration resource.
   VM:
     metadata: common_metadata
     description: Virtual machine or compute instance.
@@ -135,6 +138,9 @@ edge_types:
   EXPOSES:
     metadata: common_metadata
     description: Source entity exposes the target API, endpoint, port, or service surface.
+  HAS_ENDPOINT:
+    metadata: common_metadata
+    description: Source API surface contains or declares the target concrete endpoint.
   CALLS:
     metadata: common_metadata
     description: Source entity calls or depends on the target entity at runtime or by design.

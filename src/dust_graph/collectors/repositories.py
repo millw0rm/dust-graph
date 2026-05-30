@@ -511,6 +511,9 @@ def _add_edge(state: CollectorState, edge_type: str, source: str, target: str, d
 def _metadata(name: str | None, source_id: str, confidence: float) -> GraphMetadata:
     return GraphMetadata(
         name=name,
+        source_system="repository_collector",
+        source_ref=source_id,
+        confidence=confidence,
         evidence=[SourceEvidence(source="repository_collector", source_id=source_id, confidence=confidence)],
     )
 
