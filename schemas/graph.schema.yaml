@@ -1,0 +1,188 @@
+# Canonical Dust Graph vocabulary schema.
+#
+# This file defines the initial graph vocabulary in a backend-neutral YAML
+# format. Each node and edge type inherits the common metadata fields below.
+schema_version: 0.1.0
+name: dust-graph
+
+description: >-
+  Initial Dust Graph schema for representing repositories, services, APIs,
+  identity and access concepts, Kubernetes resources, network infrastructure,
+  and data/messaging systems.
+
+common_metadata:
+  id:
+    type: string
+    required: true
+    description: Stable Dust Graph identifier for this entity or relationship.
+  source_system:
+    type: string
+    required: true
+    description: System, tool, or integration that produced the record.
+  source_ref:
+    type: string
+    required: false
+    description: Upstream identifier, URI, path, ARN, UID, or other source reference.
+  environment:
+    type: string
+    required: false
+    description: Environment or deployment context, such as dev, staging, or prod.
+  first_seen:
+    type: datetime
+    required: false
+    description: Timestamp when this record was first observed by the source system.
+  last_seen:
+    type: datetime
+    required: false
+    description: Timestamp when this record was most recently observed by the source system.
+  confidence:
+    type: number
+    required: false
+    minimum: 0
+    maximum: 1
+    description: Confidence score for the record, where 1 is highest confidence.
+
+node_types:
+  Repository:
+    metadata: common_metadata
+    description: Source code repository or version-control project.
+  Service:
+    metadata: common_metadata
+    description: Deployable or logical runtime service.
+  API:
+    metadata: common_metadata
+    description: API surface exposed by a service or platform.
+  APIEndpoint:
+    metadata: common_metadata
+    description: Concrete API route, method, operation, or endpoint.
+  User:
+    metadata: common_metadata
+    description: Human user or account principal.
+  Group:
+    metadata: common_metadata
+    description: Collection of users, service accounts, or other groups.
+  Role:
+    metadata: common_metadata
+    description: Named set of permissions or access responsibilities.
+  Permission:
+    metadata: common_metadata
+    description: Atomic privilege, action, or authorization capability.
+  ServiceAccount:
+    metadata: common_metadata
+    description: Non-human workload, automation, or application principal.
+  K8sCluster:
+    metadata: common_metadata
+    description: Kubernetes cluster.
+  Namespace:
+    metadata: common_metadata
+    description: Kubernetes namespace or equivalent isolation boundary.
+  Pod:
+    metadata: common_metadata
+    description: Kubernetes pod or workload instance.
+  K8sService:
+    metadata: common_metadata
+    description: Kubernetes Service resource.
+  Ingress:
+    metadata: common_metadata
+    description: Kubernetes Ingress or gateway route resource.
+  NetworkPolicy:
+    metadata: common_metadata
+    description: Kubernetes NetworkPolicy or equivalent traffic policy.
+  VM:
+    metadata: common_metadata
+    description: Virtual machine or compute instance.
+  Host:
+    metadata: common_metadata
+    description: Physical or logical host system.
+  Subnet:
+    metadata: common_metadata
+    description: Network subnet or CIDR segment.
+  IPAddress:
+    metadata: common_metadata
+    description: IP address assigned to a network interface or endpoint.
+  Port:
+    metadata: common_metadata
+    description: Network port, optionally including protocol context.
+  Firewall:
+    metadata: common_metadata
+    description: Firewall appliance, service, or control plane.
+  FirewallPolicy:
+    metadata: common_metadata
+    description: Firewall rule, rule group, ACL, or policy object.
+  VPN:
+    metadata: common_metadata
+    description: Virtual private network connection, gateway, or tunnel.
+  Database:
+    metadata: common_metadata
+    description: Database system, schema, or datastore.
+  Broker:
+    metadata: common_metadata
+    description: Messaging broker or event streaming system.
+  Topic:
+    metadata: common_metadata
+    description: Publish/subscribe topic or event stream.
+  Queue:
+    metadata: common_metadata
+    description: Message queue or work queue.
+
+edge_types:
+  CONTAINS:
+    metadata: common_metadata
+    description: Parent entity contains a child entity.
+  OWNS:
+    metadata: common_metadata
+    description: Source entity owns or is accountable for the target entity.
+  EXPOSES:
+    metadata: common_metadata
+    description: Source entity exposes the target API, endpoint, port, or service surface.
+  CALLS:
+    metadata: common_metadata
+    description: Source entity calls or depends on the target entity at runtime or by design.
+  CONNECTS_TO:
+    metadata: common_metadata
+    description: Source entity has a configured connection to the target entity.
+  OBSERVED_CONNECTS_TO:
+    metadata: common_metadata
+    description: Source entity was observed connecting to the target entity.
+  CAN_CALL:
+    metadata: common_metadata
+    description: Source entity is permitted or expected to call the target entity.
+  CAN_ACCESS:
+    metadata: common_metadata
+    description: Source principal or entity can access the target entity.
+  MEMBER_OF:
+    metadata: common_metadata
+    description: Source principal or group is a member of the target group.
+  HAS_ROLE:
+    metadata: common_metadata
+    description: Source principal or entity has the target role.
+  GRANTS:
+    metadata: common_metadata
+    description: Source role or policy grants the target permission or access.
+  RUNS_AS:
+    metadata: common_metadata
+    description: Source workload runs as the target user or service account.
+  DEPLOYS_TO:
+    metadata: common_metadata
+    description: Source artifact, service, or workload deploys to the target environment or platform entity.
+  ROUTES_TO:
+    metadata: common_metadata
+    description: Source route, ingress, service, or policy routes traffic to the target entity.
+  ALLOWS:
+    metadata: common_metadata
+    description: Source policy allows traffic, access, or action involving the target entity.
+  DENIES:
+    metadata: common_metadata
+    description: Source policy denies traffic, access, or action involving the target entity.
+  READS_FROM:
+    metadata: common_metadata
+    description: Source entity reads data or messages from the target entity.
+  WRITES_TO:
+    metadata: common_metadata
+    description: Source entity writes data or messages to the target entity.
+  PUBLISHES_TO:
+    metadata: common_metadata
+    description: Source entity publishes events or messages to the target topic or broker.
+  CONSUMES_FROM:
+    metadata: common_metadata
+    description: Source entity consumes events or messages from the target topic, queue, or broker.
