@@ -55,6 +55,43 @@ node_types:
   APIEndpoint:
     metadata: common_metadata
     description: Concrete API route, method, operation, or endpoint.
+    properties:
+      method:
+        type: string
+        required: false
+        description: HTTP method declared by the API specification.
+      path:
+        type: string
+        required: false
+        description: Route template or URL path declared by the API specification.
+      operation_id:
+        type: string
+        required: false
+        description: OpenAPI operationId for the endpoint.
+      tags:
+        type: array
+        required: false
+        description: OpenAPI operation tags.
+      summary:
+        type: string
+        required: false
+        description: Short OpenAPI operation summary.
+      security_requirements:
+        type: array
+        required: false
+        description: Flattened OpenAPI security requirements as scheme or scheme:scope values.
+      request_body_content_types:
+        type: array
+        required: false
+        description: Request body media types accepted by the operation.
+      response_status_codes:
+        type: array
+        required: false
+        description: Response status codes declared by the operation.
+      required_permission_ids:
+        type: array
+        required: false
+        description: Permission nodes derived from OpenAPI security requirements for later access mapping.
   User:
     metadata: common_metadata
     description: Human user or account principal.

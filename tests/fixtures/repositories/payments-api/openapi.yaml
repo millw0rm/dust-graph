@@ -2,9 +2,54 @@ openapi: 3.0.3
 info:
   title: Payments API
   version: v1
+security:
+  - OAuth2:
+      - payments:read
 paths:
   /payments:
     get:
       operationId: listPayments
+      tags:
+        - payments
+      summary: List payments
+      responses:
+        '200':
+          description: Payment collection
+        '401':
+          description: Missing or invalid credentials
     post:
       operationId: createPayment
+      tags:
+        - payments
+      summary: Create a payment
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Payment created
+        '400':
+          description: Invalid payment request
+        '401':
+          description: Missing or invalid API key
+components:
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.example.test/oauth/token
+          scopes:
+            payments:read: Read payments
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key

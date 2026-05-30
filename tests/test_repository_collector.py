@@ -59,3 +59,75 @@ def test_repository_collector_supports_second_repository_for_cross_repo_relation
     assert "port:9090:tcp" in _node_ids(orders)
     assert payments_topics & orders_topics == {"topic:payments_topic"}
     assert any(node.type == "Queue" and node.properties["config_key"] == "RABBITMQ_QUEUE" for node in orders.nodes)
+
+
+def test_repository_collector_extracts_openapi_endpoint_metadata() -> None:
+    fixture = collect_repository(FIXTURE_ROOT / "payments-api")
+    openapi_path = str((FIXTURE_ROOT / "payments-api" / "openapi.yaml").resolve())
+
+    get_endpoint = next(node for node in fixture.nodes if node.id == "endpoint:payments-api:get:payments")
+    post_endpoint = next(node for node in fixture.nodes if node.id == "endpoint:payments-api:post:payments")
+
+    assert get_endpoint.properties["method"] == "GET"
+    assert get_endpoint.properties["path"] == "/payments"
+    assert get_endpoint.properties["operation_id"] == "listPayments"
+    assert get_endpoint.properties["tags"] == ["payments"]
+    assert get_endpoint.properties["summary"] == "List payments"
+    assert get_endpoint.properties["security_requirements"] == ["OAuth2:payments:read"]
+    assert get_endpoint.properties["request_body_content_types"] == []
+    assert get_endpoint.properties["response_status_codes"] == ["200", "401"]
+    assert get_endpoint.properties["source_path"] == openapi_path
+    assert get_endpoint.metadata.source_ref == openapi_path
+    assert {evidence.source_id for evidence in get_endpoint.metadata.evidence} == {openapi_path}
+
+    assert post_endpoint.properties["method"] == "POST"
+    assert post_endpoint.properties["path"] == "/payments"
+    assert post_endpoint.properties["operation_id"] == "createPayment"
+    assert post_endpoint.properties["tags"] == ["payments"]
+    assert post_endpoint.properties["summary"] == "Create a payment"
+    assert post_endpoint.properties["security_requirements"] == ["ApiKeyAuth"]
+    assert post_endpoint.properties["request_body_content_types"] == [
+        "application/json",
+        "application/x-www-form-urlencoded",
+    ]
+    assert post_endpoint.properties["response_status_codes"] == ["201", "400", "401"]
+    assert post_endpoint.metadata.source_ref == openapi_path
+
+
+def test_repository_collector_creates_openapi_access_metadata_for_secured_endpoints() -> None:
+    fixture = collect_repository(FIXTURE_ROOT / "payments-api")
+    openapi_path = str((FIXTURE_ROOT / "payments-api" / "openapi.yaml").resolve())
+    edge_types = _edge_types(fixture)
+
+    api = next(node for node in fixture.nodes if node.id == "api:payments-api:payments-api:v1")
+    get_endpoint = next(node for node in fixture.nodes if node.id == "endpoint:payments-api:get:payments")
+    post_endpoint = next(node for node in fixture.nodes if node.id == "endpoint:payments-api:post:payments")
+    oauth_permission = next(
+        node
+        for node in fixture.nodes
+        if node.type == "Permission" and node.properties["openapi_security_requirement"] == "OAuth2:payments:read"
+    )
+    api_key_permission = next(
+        node
+        for node in fixture.nodes
+        if node.type == "Permission" and node.properties["openapi_security_requirement"] == "ApiKeyAuth"
+    )
+
+    assert api.properties["security_schemes"] == ["ApiKeyAuth", "OAuth2"]
+    assert api.properties["security_scheme_types"] == ["ApiKeyAuth:apiKey", "OAuth2:oauth2"]
+
+    assert get_endpoint.properties["security_schemes"] == ["OAuth2"]
+    assert get_endpoint.properties["security_scopes"] == ["payments:read"]
+    assert oauth_permission.id in get_endpoint.properties["required_permission_ids"]
+
+    assert post_endpoint.properties["security_schemes"] == ["ApiKeyAuth"]
+    assert api_key_permission.id in post_endpoint.properties["required_permission_ids"]
+
+    assert oauth_permission.properties["source_path"] == openapi_path
+    assert oauth_permission.properties["openapi_security_scheme"] == "OAuth2"
+    assert oauth_permission.properties["openapi_security_scheme_type"] == "oauth2"
+    assert oauth_permission.properties["openapi_security_scope"] == "payments:read"
+    assert oauth_permission.metadata.source_ref == openapi_path
+    assert {evidence.source_id for evidence in oauth_permission.metadata.evidence} == {openapi_path}
+    assert (oauth_permission.id, "CAN_CALL", get_endpoint.id) in edge_types
+    assert (api_key_permission.id, "CAN_CALL", post_endpoint.id) in edge_types
