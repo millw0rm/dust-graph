@@ -34,13 +34,46 @@ CONFIG_FILE_NAMES = {
     "settings.yaml",
 }
 DOCKERFILE_RE = re.compile(r"(^|/)Dockerfile([.\w-]*)?$", re.IGNORECASE)
-SECRET_KEY_RE = re.compile(r"(secret|password|passwd|token|api[_-]?key|credential|private[_-]?key)", re.I)
 DB_KEY_RE = re.compile(r"(database|datasource|db_|_db|postgres|postgresql|mysql|mariadb|mongodb|mongo|redis|sqlite|jdbc)", re.I)
 BROKER_KEY_RE = re.compile(r"(broker|kafka|rabbitmq|amqp|sqs|sns|pubsub|nats|mqtt|activemq)", re.I)
 TOPIC_KEY_RE = re.compile(r"topic", re.I)
 QUEUE_KEY_RE = re.compile(r"queue", re.I)
 API_URL_KEY_RE = re.compile(r"(api|endpoint|base[_-]?url|service[_-]?url|url)$", re.I)
 SERVICE_KEY_RE = re.compile(r"(^|[._-])(service|app|application)[._-]?(name)?$", re.I)
+
+# Redaction/classification helpers for config-derived values. The repository
+# collector may inspect raw config values transiently, but graph facts must only
+# retain classification results and minimized metadata.
+SENSITIVE_KEY_RE = re.compile(
+    r"(secret|password|passwd|pwd|token|api[_-]?key|access[_-]?key|credential|cred|private[_-]?key|"
+    r"client[_-]?secret|auth(orization)?|bearer|cookie|session|dsn)",
+    re.I,
+)
+SENSITIVE_VALUE_RE = re.compile(
+    r"(-----BEGIN [A-Z ]*PRIVATE KEY-----|-----BEGIN [A-Z ]*SECRET KEY-----|"
+    r"bearer\s+[A-Za-z0-9._~+/=-]+|authorization:|password=|passwd=|pwd=|token=|api[_-]?key=|"
+    r"AWS[A-Z0-9]{16}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|"
+    r"ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk_(?:live|test)_[A-Za-z0-9]{20,})",
+    re.I | re.S,
+)
+JWT_RE = re.compile(r"^[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$")
+SECRET_LIKE_VALUE_RE = re.compile(r"^[A-Za-z0-9_./+=:-]{24,}$")
+SAFE_RESOURCE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+KNOWN_URL_SCHEMES = {
+    "amqp",
+    "amqps",
+    "http",
+    "https",
+    "jdbc",
+    "kafka",
+    "mongodb",
+    "mongodb+srv",
+    "mysql",
+    "postgres",
+    "postgresql",
+    "redis",
+    "rediss",
+}
 
 LANGUAGE_EXTENSIONS = {
     ".py": "Python",
@@ -744,55 +777,104 @@ def _add_k8s_namespace(state: CollectorState, namespace: str, path: Path) -> str
 def _extract_config_hints(state: CollectorState, path: Path) -> None:
     if path.name not in CONFIG_FILE_NAMES and path.suffix.lower() not in {".env", ".properties"}:
         return
+    source = _source(path)
     for key, value in _config_pairs(path):
-        service = _add_service(state, _best_service_name(state), _source(path), 0.55)
-        redacted_key = key.upper()
-        if SERVICE_KEY_RE.search(key) and value and not SECRET_KEY_RE.search(key):
-            _remember_service(state, _safe_name(value), _source(path))
+        service = _add_service(state, _best_service_name(state), source, 0.55)
+        redacted = _redacted_config_value(key, value)
+        redacted_key = redacted["config_key"]
+        if SERVICE_KEY_RE.search(key) and not _is_sensitive_key(key):
+            service_hint = _safe_resource_hint(key, value)
+            if service_hint:
+                _remember_service(state, service_hint, source)
         if DB_KEY_RE.search(key):
             engine = _database_engine(key, value)
             database_id = f"database:{_slug(engine)}:{_slug(redacted_key)}"
-            database_name = _database_name(value)
-            properties = {"engine": engine, "config_key": redacted_key, "value_redacted": True}
+            properties = {**redacted, **_safe_connection_metadata(key, value), "engine": engine}
+            database_name = _database_name(key, value)
             if database_name:
                 properties["database_name"] = database_name
-            _add_node(state, GraphNode(id=database_id, type="Database", labels=["Database"], properties=properties, metadata=_metadata(redacted_key, _source(path), 0.65)))
-            _add_edge(state, "CONNECTS_TO", service.id, database_id, _source(path), 0.65)
+            _add_node(
+                state,
+                GraphNode(
+                    id=database_id,
+                    type="Database",
+                    labels=["Database"],
+                    properties=properties,
+                    metadata=_metadata(redacted_key, source, 0.65),
+                ),
+            )
+            _add_edge(state, "CONNECTS_TO", service.id, database_id, source, 0.65)
         if BROKER_KEY_RE.search(key):
             broker_type = _broker_type(key, value)
             broker_id = f"broker:{_slug(broker_type)}:{_slug(redacted_key)}"
-            _add_node(state, GraphNode(id=broker_id, type="Broker", labels=["Broker"], properties={"broker_type": broker_type, "config_key": redacted_key, "value_redacted": True}, metadata=_metadata(redacted_key, _source(path), 0.65)))
-            _add_edge(state, "CONNECTS_TO", service.id, broker_id, _source(path), 0.65)
+            properties = {**redacted, **_safe_connection_metadata(key, value), "broker_type": broker_type}
+            _add_node(
+                state,
+                GraphNode(
+                    id=broker_id,
+                    type="Broker",
+                    labels=["Broker"],
+                    properties=properties,
+                    metadata=_metadata(redacted_key, source, 0.65),
+                ),
+            )
+            _add_edge(state, "CONNECTS_TO", service.id, broker_id, source, 0.65)
         if TOPIC_KEY_RE.search(key):
             topic_id = f"topic:{_slug(redacted_key)}"
-            properties = {"config_key": redacted_key, "value_redacted": True}
-            if value and not SECRET_KEY_RE.search(key):
-                properties["topic_name"] = _safe_resource_name(value)
-            _add_node(state, GraphNode(id=topic_id, type="Topic", labels=["Topic"], properties=properties, metadata=_metadata(redacted_key, _source(path), 0.6)))
+            properties = dict(redacted)
+            topic_name = _safe_resource_hint(key, value)
+            if topic_name:
+                properties["topic_name"] = topic_name
+            _add_node(
+                state,
+                GraphNode(
+                    id=topic_id,
+                    type="Topic",
+                    labels=["Topic"],
+                    properties=properties,
+                    metadata=_metadata(redacted_key, source, 0.6),
+                ),
+            )
             edge_type = "CONSUMES_FROM" if _is_consumer_key(key) else "PUBLISHES_TO"
-            _add_edge(state, edge_type, service.id, topic_id, _source(path), 0.6)
+            _add_edge(state, edge_type, service.id, topic_id, source, 0.6)
         if QUEUE_KEY_RE.search(key):
             queue_id = f"queue:{_slug(redacted_key)}"
-            properties = {"config_key": redacted_key, "value_redacted": True}
-            if value and not SECRET_KEY_RE.search(key):
-                properties["queue_name"] = _safe_resource_name(value)
-            _add_node(state, GraphNode(id=queue_id, type="Queue", labels=["Queue"], properties=properties, metadata=_metadata(redacted_key, _source(path), 0.6)))
+            properties = dict(redacted)
+            queue_name = _safe_resource_hint(key, value)
+            if queue_name:
+                properties["queue_name"] = queue_name
+            _add_node(
+                state,
+                GraphNode(
+                    id=queue_id,
+                    type="Queue",
+                    labels=["Queue"],
+                    properties=properties,
+                    metadata=_metadata(redacted_key, source, 0.6),
+                ),
+            )
             edge_type = "PUBLISHES_TO" if _is_producer_key(key) else "CONSUMES_FROM"
-            _add_edge(state, edge_type, service.id, queue_id, _source(path), 0.6)
+            _add_edge(state, edge_type, service.id, queue_id, source, 0.6)
         if _looks_like_api_url(key, value):
             endpoint_id = f"endpointref:{_slug(state.repo_name)}:{_slug(redacted_key)}"
-            url_parts = _url_parts(value or "")
             properties = {
+                **_safe_connection_metadata(key, value),
                 "consumer_hint": True,
-                "config_key": redacted_key,
-                "value_redacted": True,
-                "base_url": url_parts["base_url"],
-                "host": url_parts["host"],
-                "path": url_parts["path"],
-                "service_name_hint": _service_hint_from_key_or_url(key, value),
             }
-            _add_node(state, GraphNode(id=endpoint_id, type="APIEndpoint", labels=["APIEndpoint"], properties=properties, metadata=_metadata(redacted_key, _source(path), 0.7)))
-            _add_edge(state, "CALLS", service.id, endpoint_id, _source(path), 0.7)
+            service_name_hint = _service_hint_from_key_or_url(key, value)
+            if service_name_hint:
+                properties["service_name_hint"] = service_name_hint
+            _add_node(
+                state,
+                GraphNode(
+                    id=endpoint_id,
+                    type="APIEndpoint",
+                    labels=["APIEndpoint"],
+                    properties=properties,
+                    metadata=_metadata(redacted_key, source, 0.7),
+                ),
+            )
+            _add_edge(state, "CALLS", service.id, endpoint_id, source, 0.7)
 
 
 def _extract_ci_workflows(state: CollectorState, path: Path) -> None:
@@ -975,6 +1057,112 @@ def _safe_lines(path: Path) -> list[str]:
         return []
 
 
+def _is_sensitive_key(key: str) -> bool:
+    return bool(SENSITIVE_KEY_RE.search(key))
+
+
+def _looks_sensitive_value(value: str | None) -> bool:
+    if not value:
+        return False
+    stripped = value.strip()
+    if SENSITIVE_VALUE_RE.search(stripped) or JWT_RE.fullmatch(stripped):
+        return True
+    parsed = urlparse(stripped)
+    if parsed.scheme and parsed.netloc and (parsed.username or parsed.password):
+        return True
+    if parsed.scheme in KNOWN_URL_SCHEMES and any(part in parsed.query.lower() for part in ("password", "token", "key", "secret")):
+        return True
+    return _looks_high_entropy(stripped)
+
+
+def _looks_high_entropy(value: str) -> bool:
+    candidate = value.strip().strip('"\'')
+    if not SECRET_LIKE_VALUE_RE.fullmatch(candidate):
+        return False
+    if re.fullmatch(r"[A-Za-z0-9_.:-]+", candidate) and any(separator in candidate for separator in (".", ":", "-", "_")):
+        # Human-readable resource names such as payments.events or db.internal:5432
+        # should not be treated as secrets solely because they are moderately long.
+        return False
+    unique_ratio = len(set(candidate)) / max(len(candidate), 1)
+    has_mixed_classes = sum(
+        bool(re.search(pattern, candidate))
+        for pattern in (r"[a-z]", r"[A-Z]", r"\d", r"[+/=_-]")
+    ) >= 3
+    return len(candidate) >= 32 and unique_ratio > 0.45 and has_mixed_classes
+
+
+def _redaction_reason(key: str, value: str | None) -> str:
+    if _is_sensitive_key(key):
+        return "sensitive_config_key"
+    if _looks_sensitive_value(value):
+        return "sensitive_config_value"
+    return "config_value_minimized"
+
+
+def _redacted_config_value(key: str, value: str | None) -> dict[str, Any]:
+    return {
+        "config_key": key.upper(),
+        "value_redacted": True,
+        "redaction_reason": _redaction_reason(key, value),
+    }
+
+
+def _safe_connection_metadata(key: str, value: str | None) -> dict[str, Any]:
+    metadata = _redacted_config_value(key, value)
+    parsed = urlparse(value or "")
+    scheme = parsed.scheme.lower()
+    if scheme:
+        metadata["scheme"] = scheme
+        metadata["protocol"] = scheme
+    host = parsed.hostname
+    if host:
+        metadata["host"] = host
+    port = _parsed_port(parsed)
+    if port is not None:
+        metadata["port"] = port
+    resource_hint = _safe_resource_hint(key, _url_resource_name(parsed))
+    if resource_hint:
+        metadata["resource_name"] = resource_hint
+    path_hint = _safe_url_path_hint(key, parsed.path)
+    if path_hint:
+        metadata["path"] = path_hint
+    return metadata
+
+
+def _safe_resource_hint(key: str, value: str | None) -> str | None:
+    if not value or _is_sensitive_key(key) or _looks_sensitive_value(value):
+        return None
+    resource = _safe_resource_name(value)
+    if not resource or not SAFE_RESOURCE_RE.fullmatch(resource) or _looks_sensitive_value(resource):
+        return None
+    return resource
+
+
+def _parsed_port(parsed: Any) -> int | None:
+    try:
+        return parsed.port
+    except ValueError:
+        return None
+
+
+def _url_resource_name(parsed: Any) -> str | None:
+    if parsed.path and parsed.path != "/":
+        return parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    return None
+
+
+def _safe_url_path_hint(key: str, path: str | None) -> str | None:
+    if not path or path == "/" or _is_sensitive_key(key):
+        return None
+    segments = [segment for segment in path.split("/") if segment]
+    if not segments:
+        return None
+    safe_segments = [_safe_resource_hint(key, segment) for segment in segments]
+    if any(segment is None for segment in safe_segments):
+        return None
+    return "/" + "/".join(segment for segment in safe_segments if segment)
+
+
 def _database_engine(key: str, value: str | None) -> str:
     text = f"{key} {value or ''}".lower()
     for engine in ("postgres", "postgresql", "mysql", "mariadb", "mongodb", "mongo", "redis", "sqlite"):
@@ -992,15 +1180,14 @@ def _broker_type(key: str, value: str | None) -> str:
     return "unknown"
 
 
-
-def _database_name(value: str | None) -> str | None:
+def _database_name(key: str, value: str | None) -> str | None:
     if not value:
         return None
     parsed = urlparse(value)
     if parsed.path and parsed.path != "/":
-        return _safe_resource_name(parsed.path.rsplit("/", 1)[-1])
-    if "://" not in value and re.fullmatch(r"[A-Za-z0-9_.-]+", value):
-        return _safe_resource_name(value)
+        return _safe_resource_hint(key, parsed.path.rsplit("/", 1)[-1])
+    if "://" not in value:
+        return _safe_resource_hint(key, value)
     return None
 
 
@@ -1017,22 +1204,12 @@ def _is_producer_key(key: str) -> bool:
 
 
 def _looks_like_api_url(key: str, value: str | None) -> bool:
-    if not value or SECRET_KEY_RE.search(key):
+    if not value or _is_sensitive_key(key):
         return False
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False
     return bool(API_URL_KEY_RE.search(key) or "/" in parsed.path.strip("/"))
-
-
-def _url_parts(value: str) -> dict[str, str]:
-    parsed = urlparse(value)
-    host = parsed.hostname or ""
-    netloc = host
-    if parsed.port:
-        netloc = f"{host}:{parsed.port}"
-    base_url = parsed._replace(netloc=netloc, path="", params="", query="", fragment="").geturl()
-    return {"base_url": base_url, "host": host, "path": parsed.path or "/"}
 
 
 def _service_hint_from_key_or_url(key: str, value: str | None) -> str:
@@ -1042,7 +1219,8 @@ def _service_hint_from_key_or_url(key: str, value: str | None) -> str:
         candidates.extend(parsed.hostname.split("."))
     for candidate in candidates:
         candidate = re.sub(r"(api|endpoint|base|url|service|http|https)", " ", candidate, flags=re.I)
-        safe = _safe_name(candidate)
+        candidate = re.sub(r"[._:-]+", "-", candidate).strip("-")
+        safe = _safe_resource_hint(key, candidate)
         if safe:
             return safe
     return ""
