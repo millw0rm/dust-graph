@@ -2,49 +2,55 @@
 
 ## 1. Project Goal
 
-Dust Graph is a durable, graph-centered knowledge and modeling workspace for representing projects, systems, plans, decisions, artifacts, and their relationships over time. The project should make it easy to capture structured facts, connect them into an inspectable graph, query those relationships, and evolve the model without losing historical context.
+Dust Graph is an infrastructure, API, repository, access, and runtime relationship graph for understanding how software systems are defined, connected, secured, and used. It should make it easy to ingest structured facts from repositories, network and perimeter systems, Kubernetes, API gateways, data platforms, identity providers, and runtime evidence, then connect those facts into an inspectable graph that answers ownership, dependency, exposure, access, and traffic questions.
 
-The initial goal is to establish a small, reliable foundation that can support iterative development: define the core domains, choose a graph backend strategy that can start simple and scale later, and keep each implementation step aligned with this blueprint.
+The primary product goal is to provide a reliable graph foundation that links intended configuration with observed runtime behavior: what repositories and manifests define a system, what network paths and API routes expose it, what identities can access it, what data systems it uses, and what evidence confirms those relationships. The initial implementation should stay small and reviewable while preserving a path to production-scale import, query, and validation workflows.
 
 ## 2. Major Modeling Domains
 
-The graph model should begin with a small set of high-value domains and expand only when concrete workflows require it.
+The graph model should begin with infrastructure and runtime domains that expose concrete relationships between source-defined intent, deployed resources, access boundaries, and observed behavior. Expand the model only when concrete workflows require it.
 
-### Planning and Execution
+### Repository Context
 
-- Projects, goals, milestones, tasks, and sessions.
-- Dependencies between tasks, blockers, and prerequisites.
-- Status transitions, ownership, and completion evidence.
+- Repositories, services, packages, owners, teams, and ownership metadata.
+- OpenAPI specifications, Helm charts, Kubernetes manifests, Terraform modules, CI/CD files, and other deployable artifacts.
+- Relationships from source artifacts to the systems, infrastructure, APIs, and access rules they define or influence.
 
-### Knowledge and Documentation
+### Network and Perimeter
 
-- Documents, notes, references, summaries, and source material.
-- Links between claims, supporting evidence, and derived conclusions.
-- Versioned documentation artifacts and the decisions that changed them.
+- Fortinet and FortiGate assets, VPNs, firewall policies, routes, NAT rules, subnets, IPs, ports, and VMs.
+- Allowed, denied, translated, and routed paths between users, workloads, services, data systems, and external networks.
+- Perimeter exposure and reachability relationships that connect network intent with runtime observations.
 
-### Code and Repository Structure
+### Kubernetes
 
-- Repositories, packages, modules, files, symbols, and build targets.
-- Relationships between code entities, tests, documentation, and generated artifacts.
-- Change sets, pull requests, reviews, and release notes.
+- Clusters, namespaces, workloads, pods, services, ingresses, network policies, and service accounts.
+- Ownership, deployment, routing, identity, and policy relationships across Kubernetes resources.
+- Links from Kubernetes resources back to repository artifacts such as manifests, Helm charts, and CI/CD deployment pipelines.
 
-### Decisions and Rationale
+### API Layer
 
-- Architecture decisions, alternatives, tradeoffs, constraints, and outcomes.
-- Links from decisions to the tasks, files, issues, and milestones they affect.
-- Supersession relationships when a decision is revised or replaced.
+- APIs, endpoints, methods, OpenAPI specs, gateway routes, consumers, producers, and runtime API calls.
+- Relationships between API definitions, gateway configuration, deployed services, identities, and observed calls.
+- Versioning, ownership, exposure, and dependency links that help answer who calls what and through which route.
 
-### People, Roles, and Collaboration
+### Data Systems
 
-- Contributors, maintainers, reviewers, stakeholders, and agents.
-- Responsibility relationships such as ownership, review assignment, and approval.
-- Collaboration events that provide context for why work changed direction.
+- Databases, schemas, tables, brokers, topics, queues, and related platform resources.
+- Application, service, user, and service-account access to databases, schemas, tables, brokers, topics, and queues.
+- Data dependency relationships that connect repository definitions, runtime services, and audit or metadata evidence.
 
-### Runtime and Operations
+### Identity and Access
 
-- Services, environments, deployments, incidents, checks, and observability signals.
-- Relationships between runtime behavior, code changes, and operational decisions.
-- Health, reliability, and support workflows once the project has runnable systems.
+- Users, groups, roles, permissions, service accounts, API credentials, and workload identities.
+- API access, database access, broker access, Kubernetes RBAC, and infrastructure permissions.
+- Effective-access relationships that explain who or what can reach a resource and through which grants, policies, or inherited memberships.
+
+### Runtime Evidence
+
+- Observed connections from Hubble, API gateways, FortiGate logs, database audit logs, and broker metadata.
+- Evidence records that confirm, contradict, or enrich source-defined relationships.
+- Temporal observations for traffic, access, dependency, and exposure so the graph can distinguish intended configuration from observed behavior.
 
 ## 3. Recommended Graph Backend Strategy
 
@@ -101,29 +107,29 @@ The repository should evolve toward the following layout as features are introdu
 - Define the workflow rule that every coding session derives its smaller plan from this file.
 - Establish the first documentation conventions for goals, domains, milestones, and decisions.
 
-### M2: Initial Graph Vocabulary
+### M2: Initial Infrastructure Graph Vocabulary
 
-- Define the first node and edge vocabulary for the core planning, documentation, and decision domains.
-- Add minimal examples that show how projects, tasks, documents, and decisions connect.
-- Document naming, identity, metadata, and relationship conventions.
+- Define the first node and edge vocabulary for repositories, services, owners, network resources, Kubernetes resources, APIs, data systems, identities, access grants, and runtime evidence.
+- Add minimal examples that show how repository artifacts, deployed resources, access relationships, and observed runtime connections link together.
+- Document naming, identity, metadata, provenance, and relationship conventions for infrastructure and access graph data.
 
 ### M3: Schema and Fixture Validation
 
-- Add machine-checkable schemas for the initial graph vocabulary.
-- Add fixtures that exercise expected graph shapes and invalid cases.
+- Add machine-checkable schemas for the initial infrastructure, API, access, and runtime evidence vocabulary.
+- Add fixtures that exercise expected graph shapes and invalid cases across repository, network, Kubernetes, API, data, identity, and evidence domains.
 - Provide a validation command that can run locally and in CI.
 
 ### M4: Query and Traversal Prototype
 
 - Implement a small query or traversal layer over the file-backed fixtures.
-- Support essential questions such as dependency lookup, related decisions, and milestone progress.
+- Support essential questions such as service ownership, API exposure, network reachability, effective access, data dependencies, and observed runtime paths.
 - Keep the implementation backend-neutral.
 
-### M5: Repository and Code Modeling
+### M5: Repository and Configuration Ingestion
 
-- Extend the model to represent repositories, files, modules, tests, and change sets.
-- Connect code artifacts to tasks, decisions, documentation, and milestones.
-- Add examples that demonstrate traceability from goal to implementation evidence.
+- Extend the model and examples to represent repositories, OpenAPI specs, Helm charts, Kubernetes manifests, Terraform, and CI/CD files.
+- Connect source-defined configuration to services, APIs, network paths, Kubernetes resources, data systems, and access relationships.
+- Add examples that demonstrate traceability from repository artifacts to deployed or intended infrastructure relationships.
 
 ### M6: Session Workflow Integration
 
@@ -131,17 +137,17 @@ The repository should evolve toward the following layout as features are introdu
 - Capture session outputs as graph-compatible artifacts.
 - Ensure the workflow can identify when the blueprint itself needs to change.
 
-### M7: Backend Evaluation and Adapter Boundary
+### M7: Runtime Evidence and Access Correlation
 
-- Evaluate whether the file-backed approach is still sufficient for current workloads.
+- Add import and fixture patterns for observed connections from Hubble, API gateways, FortiGate logs, database audit logs, and broker metadata.
+- Correlate runtime evidence with repository-defined intent, network policy, API routes, data access, and identity grants.
+- Identify contradictions, stale definitions, missing owners, unexpected access, and unobserved intended paths.
+
+### M8: Backend Evaluation and Production Readiness
+
+- Evaluate whether the file-backed approach is still sufficient for current infrastructure graph workloads.
 - Define the adapter boundary for any embedded, service-backed, or hosted graph database.
-- Prototype at least one backend adapter if justified by the milestone evidence.
-
-### M8: Production Readiness and Operations
-
-- Add operational modeling for services, environments, checks, releases, and incidents if the project has runnable systems.
-- Harden validation, migration, import/export, and backup workflows.
-- Document production readiness criteria and long-term maintenance expectations.
+- Harden validation, migration, import/export, backup, and operational workflows for production-scale infrastructure, API, access, and runtime evidence data.
 
 ## 6. Workflow Rule for Coding Sessions
 
