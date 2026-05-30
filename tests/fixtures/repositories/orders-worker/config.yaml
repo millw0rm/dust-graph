@@ -3,3 +3,5 @@ service:
 postgres_database: orders
 rabbitmq_queue: orders.created
 payments_topic: payments.events
+payments_api_url: https://payments-api.internal/payments
+consumer_payments_topic: payments.events

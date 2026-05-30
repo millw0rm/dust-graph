@@ -39,6 +39,7 @@ DB_KEY_RE = re.compile(r"(database|datasource|db_|_db|postgres|postgresql|mysql|
 BROKER_KEY_RE = re.compile(r"(broker|kafka|rabbitmq|amqp|sqs|sns|pubsub|nats|mqtt|activemq)", re.I)
 TOPIC_KEY_RE = re.compile(r"topic", re.I)
 QUEUE_KEY_RE = re.compile(r"queue", re.I)
+API_URL_KEY_RE = re.compile(r"(api|endpoint|base[_-]?url|service[_-]?url|url)$", re.I)
 SERVICE_KEY_RE = re.compile(r"(^|[._-])(service|app|application)[._-]?(name)?$", re.I)
 
 LANGUAGE_EXTENSIONS = {
@@ -341,7 +342,11 @@ def _extract_config_hints(state: CollectorState, path: Path) -> None:
         if DB_KEY_RE.search(key):
             engine = _database_engine(key, value)
             database_id = f"database:{_slug(engine)}:{_slug(redacted_key)}"
-            _add_node(state, GraphNode(id=database_id, type="Database", labels=["Database"], properties={"engine": engine, "config_key": redacted_key, "value_redacted": True}, metadata=_metadata(redacted_key, _source(path), 0.65)))
+            database_name = _database_name(value)
+            properties = {"engine": engine, "config_key": redacted_key, "value_redacted": True}
+            if database_name:
+                properties["database_name"] = database_name
+            _add_node(state, GraphNode(id=database_id, type="Database", labels=["Database"], properties=properties, metadata=_metadata(redacted_key, _source(path), 0.65)))
             _add_edge(state, "CONNECTS_TO", service.id, database_id, _source(path), 0.65)
         if BROKER_KEY_RE.search(key):
             broker_type = _broker_type(key, value)
@@ -350,12 +355,34 @@ def _extract_config_hints(state: CollectorState, path: Path) -> None:
             _add_edge(state, "CONNECTS_TO", service.id, broker_id, _source(path), 0.65)
         if TOPIC_KEY_RE.search(key):
             topic_id = f"topic:{_slug(redacted_key)}"
-            _add_node(state, GraphNode(id=topic_id, type="Topic", labels=["Topic"], properties={"config_key": redacted_key, "value_redacted": True}, metadata=_metadata(redacted_key, _source(path), 0.6)))
-            _add_edge(state, "PUBLISHES_TO", service.id, topic_id, _source(path), 0.6)
+            properties = {"config_key": redacted_key, "value_redacted": True}
+            if value and not SECRET_KEY_RE.search(key):
+                properties["topic_name"] = _safe_resource_name(value)
+            _add_node(state, GraphNode(id=topic_id, type="Topic", labels=["Topic"], properties=properties, metadata=_metadata(redacted_key, _source(path), 0.6)))
+            edge_type = "CONSUMES_FROM" if _is_consumer_key(key) else "PUBLISHES_TO"
+            _add_edge(state, edge_type, service.id, topic_id, _source(path), 0.6)
         if QUEUE_KEY_RE.search(key):
             queue_id = f"queue:{_slug(redacted_key)}"
-            _add_node(state, GraphNode(id=queue_id, type="Queue", labels=["Queue"], properties={"config_key": redacted_key, "value_redacted": True}, metadata=_metadata(redacted_key, _source(path), 0.6)))
-            _add_edge(state, "CONSUMES_FROM", service.id, queue_id, _source(path), 0.6)
+            properties = {"config_key": redacted_key, "value_redacted": True}
+            if value and not SECRET_KEY_RE.search(key):
+                properties["queue_name"] = _safe_resource_name(value)
+            _add_node(state, GraphNode(id=queue_id, type="Queue", labels=["Queue"], properties=properties, metadata=_metadata(redacted_key, _source(path), 0.6)))
+            edge_type = "PUBLISHES_TO" if _is_producer_key(key) else "CONSUMES_FROM"
+            _add_edge(state, edge_type, service.id, queue_id, _source(path), 0.6)
+        if _looks_like_api_url(key, value):
+            endpoint_id = f"endpointref:{_slug(state.repo_name)}:{_slug(redacted_key)}"
+            url_parts = _url_parts(value or "")
+            properties = {
+                "consumer_hint": True,
+                "config_key": redacted_key,
+                "value_redacted": True,
+                "base_url": url_parts["base_url"],
+                "host": url_parts["host"],
+                "path": url_parts["path"],
+                "service_name_hint": _service_hint_from_key_or_url(key, value),
+            }
+            _add_node(state, GraphNode(id=endpoint_id, type="APIEndpoint", labels=["APIEndpoint"], properties=properties, metadata=_metadata(redacted_key, _source(path), 0.7)))
+            _add_edge(state, "CALLS", service.id, endpoint_id, _source(path), 0.7)
 
 
 def _extract_ci_workflows(state: CollectorState, path: Path) -> None:
@@ -465,6 +492,61 @@ def _broker_type(key: str, value: str | None) -> str:
             return broker
     return "unknown"
 
+
+
+def _database_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.path and parsed.path != "/":
+        return _safe_resource_name(parsed.path.rsplit("/", 1)[-1])
+    if "://" not in value and re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+        return _safe_resource_name(value)
+    return None
+
+
+def _safe_resource_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.:-]+", "-", value.strip()).strip("-.")
+
+
+def _is_consumer_key(key: str) -> bool:
+    return bool(re.search(r"(consume|consumer|subscribe|input|source|read)", key, re.I))
+
+
+def _is_producer_key(key: str) -> bool:
+    return bool(re.search(r"(produce|producer|publish|output|sink|write)", key, re.I))
+
+
+def _looks_like_api_url(key: str, value: str | None) -> bool:
+    if not value or SECRET_KEY_RE.search(key):
+        return False
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    return bool(API_URL_KEY_RE.search(key) or "/" in parsed.path.strip("/"))
+
+
+def _url_parts(value: str) -> dict[str, str]:
+    parsed = urlparse(value)
+    host = parsed.hostname or ""
+    netloc = host
+    if parsed.port:
+        netloc = f"{host}:{parsed.port}"
+    base_url = parsed._replace(netloc=netloc, path="", params="", query="", fragment="").geturl()
+    return {"base_url": base_url, "host": host, "path": parsed.path or "/"}
+
+
+def _service_hint_from_key_or_url(key: str, value: str | None) -> str:
+    parsed = urlparse(value or "")
+    candidates = [key]
+    if parsed.hostname:
+        candidates.extend(parsed.hostname.split("."))
+    for candidate in candidates:
+        candidate = re.sub(r"(api|endpoint|base|url|service|http|https)", " ", candidate, flags=re.I)
+        safe = _safe_name(candidate)
+        if safe:
+            return safe
+    return ""
 
 def _add_port(state: CollectorState, source_id: str, raw_port: str, source: str, protocol: str | None = None) -> None:
     match = re.search(r"(?P<port>\d{2,5})(?:/(?P<protocol>tcp|udp))?", raw_port, re.I)
