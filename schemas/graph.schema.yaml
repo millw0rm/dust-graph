@@ -116,6 +116,9 @@ node_types:
   Pod:
     metadata: common_metadata
     description: Kubernetes pod or workload instance.
+  K8sDeployment:
+    metadata: common_metadata
+    description: Kubernetes Deployment workload resource.
   K8sService:
     metadata: common_metadata
     description: Kubernetes Service resource.

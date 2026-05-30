@@ -29,8 +29,11 @@ def test_repository_collector_extracts_safe_service_api_k8s_and_runtime_metadata
     assert "api:payments-api:payments-api:v1" in node_ids
     assert "endpoint:payments-api:get:payments" in node_ids
     assert "namespace:commerce" in node_ids
+    assert "k8sdeployment:commerce:payments-api" in node_ids
     assert "k8sservice:commerce:payments-api" in node_ids
+    assert "ingress:commerce:payments-api" in node_ids
     assert "serviceaccount:commerce:payments-api" in node_ids
+    assert "networkpolicy:commerce:payments-api-ingress" in node_ids
     assert "port:8080:tcp" in node_ids
     assert "port:80:tcp" in node_ids
     assert any(node.type == "Database" and node.properties["value_redacted"] for node in fixture.nodes)
@@ -43,6 +46,22 @@ def test_repository_collector_extracts_safe_service_api_k8s_and_runtime_metadata
     assert ("service:payments-api", "EXPOSES", "api:payments-api:payments-api:v1") in edge_types
     assert ("api:payments-api:payments-api:v1", "HAS_ENDPOINT", "endpoint:payments-api:get:payments") in edge_types
     assert ("service:payments-api", "RUNS_AS", "serviceaccount:commerce:payments-api") in edge_types
+    assert ("k8sdeployment:commerce:payments-api", "RUNS_AS", "serviceaccount:commerce:payments-api") in edge_types
+    assert ("ingress:commerce:payments-api", "ROUTES_TO", "k8sservice:commerce:payments-api") in edge_types
+    assert ("k8sservice:commerce:payments-api", "ROUTES_TO", "k8sdeployment:commerce:payments-api") in edge_types
+    assert ("networkpolicy:commerce:payments-api-ingress", "ALLOWS", "k8sdeployment:commerce:payments-api") in edge_types
+
+
+def test_repository_collector_matches_k8s_service_selectors_to_deployment_labels() -> None:
+    fixture = collect_repository(FIXTURE_ROOT / "payments-api")
+    edge_types = _edge_types(fixture)
+
+    deployment = next(node for node in fixture.nodes if node.id == "k8sdeployment:commerce:payments-api")
+    service = next(node for node in fixture.nodes if node.id == "k8sservice:commerce:payments-api")
+
+    assert deployment.properties["labels"] == {"app": "payments-api", "tier": "backend"}
+    assert service.properties["selector"] == {"app": "payments-api"}
+    assert ("k8sservice:commerce:payments-api", "ROUTES_TO", "k8sdeployment:commerce:payments-api") in edge_types
 
 
 def test_repository_collector_supports_second_repository_for_cross_repo_relationships() -> None:
