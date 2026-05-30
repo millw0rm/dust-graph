@@ -315,3 +315,12 @@ Rules may create resource-level edges first and repository-level summary edges s
 - `last_observed_at`: latest observation time.
 
 Repository-level summary edges should be recomputed when source evidence expires or when a higher-confidence owner for a resource is discovered.
+
+## Implementation Status
+
+- Added an initial deterministic resolver in `dust_graph.resolvers.cross_repository` that accepts two or more repository collector fixtures and returns a combined fixture with inferred cross-repository edges.
+- Implemented API call inference from consumer URL/config hints to provider OpenAPI endpoints, with resource-level `CALLS` edges and repository-level summary `CALLS` edges.
+- Implemented shared topic/queue inference between cross-repository broker producers and consumers using normalized topic or queue names.
+- Implemented shared database inference using redacted-safe database identifiers, parsed database names, and schema/config hints to create `CONNECTS_TO`, `READS_FROM`, and `WRITES_TO` edges.
+- Added confidence levels, confidence reasons, matched values, and source evidence metadata to inferred edges.
+- Expanded repository collector config hints so fixture repositories can expose redaction-safe API URL, topic/queue name, and database-name hints for cross-repository resolution.
