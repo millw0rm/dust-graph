@@ -1,0 +1,3 @@
+stages: [test]
+unit-test:
+  script: pytest
