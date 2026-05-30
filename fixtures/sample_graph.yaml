@@ -1,0 +1,51 @@
+version: 1
+name: sample-service-graph
+description: Minimal graph linking a repository, service, API, and owner.
+nodes:
+  - id: repo:dust-api
+    type: Repository
+    labels: [Repository]
+    properties:
+      url: https://example.invalid/dust-api
+    metadata:
+      name: dust-api
+      owner: platform-team
+      tags: [sample]
+      evidence:
+        - source: fixture
+          source_id: fixtures/sample_graph.yaml#repo
+          confidence: 1.0
+  - id: service:dust-api
+    type: Service
+    labels: [Service]
+    metadata:
+      name: dust-api
+      owner: platform-team
+      environment: dev
+      tags: [sample]
+  - id: api:dust-api-public
+    type: API
+    labels: [API]
+    metadata:
+      name: Dust API Public
+      environment: dev
+  - id: team:platform
+    type: Group
+    labels: [Group]
+    metadata:
+      name: platform-team
+edges:
+  - type: OWNS
+    source: team:platform
+    target: service:dust-api
+    metadata:
+      evidence:
+        - source: fixture
+          source_id: fixtures/sample_graph.yaml#owns
+          confidence: 1.0
+  - type: DEPLOYS_TO
+    source: repo:dust-api
+    target: service:dust-api
+  - type: EXPOSES
+    source: service:dust-api
+    target: api:dust-api-public

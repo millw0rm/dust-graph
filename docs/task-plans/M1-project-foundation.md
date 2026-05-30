@@ -10,7 +10,7 @@ M1 work is limited to foundational scaffolding and early contracts:
 - Create package and tooling files that make the repository runnable for future tasks.
 - Define graph-core model types for nodes, edges, identifiers, metadata, and validation boundaries.
 - Introduce a graph adapter interface that keeps storage backends replaceable.
-- Add a Kuzu adapter skeleton without requiring full backend behavior.
+- Keep Kuzu as the next adapter after the in-memory adapter contract works.
 - Add a CLI skeleton for future import, validation, and query commands.
 - Establish a sample fixture format for small graph examples.
 - Design one sample import command and one sample query.
@@ -20,22 +20,22 @@ M1 work is limited to foundational scaffolding and early contracts:
 
 | # | Task | Status | Acceptance Notes |
 | --- | --- | --- | --- |
-| 1 | Choose language/runtime. | `pending` | Record the selected language/runtime, version expectations, and rationale in the repository docs or package metadata. |
-| 2 | Add package/tooling files. | `pending` | Add the minimal package manager, formatter/linter/test, and local run scripts needed for later M1 implementation tasks. |
-| 3 | Create graph-core model definitions. | `pending` | Define foundational graph model shapes for nodes, edges, IDs, labels/types, properties, and metadata without binding them to a storage backend. |
-| 4 | Create graph adapter interface. | `pending` | Define the backend-neutral interface for importing, querying, and basic lifecycle interactions with a graph store. |
-| 5 | Create Kuzu adapter skeleton. | `pending` | Add a Kuzu-specific adapter placeholder that implements or conforms to the graph adapter interface without requiring complete persistence behavior. |
-| 6 | Create CLI skeleton. | `pending` | Add a minimal command-line entry point and command grouping for future import, validation, and query workflows. |
-| 7 | Add sample fixture format. | `pending` | Document and add a small sample fixture structure that can represent graph nodes and edges for local examples. |
-| 8 | Add one sample import command design. | `pending` | Specify one import command shape, expected arguments, and intended behavior for loading a sample fixture. |
-| 9 | Add one sample query design. | `pending` | Specify one saved or example query, including the graph question it answers and the expected result shape. |
-| 10 | Add documentation for how future tasks should update task-plan files. | `pending` | Document when task statuses should change, where evidence should be noted, and how newly discovered work should be added to milestone task plans. |
+| 1 | Choose language/runtime. | `done` | Python 3.11+ selected in `pyproject.toml` and `README.md`; Typer, Pydantic, YAML fixtures, and an adapter-first storage path are documented. |
+| 2 | Add package/tooling files. | `done` | Added `pyproject.toml` with package metadata, console script, runtime dependencies, pytest configuration, and dev test dependency. |
+| 3 | Create graph-core model definitions. | `done` | Added Pydantic models for source evidence, graph metadata, nodes, edges, and importable graph fixtures in `src/dust_graph/models.py`. |
+| 4 | Create graph adapter interface. | `done` | Added `GraphAdapter` protocol with `upsert_node`, `upsert_edge`, `bulk_import`, and `query` in `src/dust_graph/adapter.py`. |
+| 5 | Create Kuzu adapter skeleton. | `pending` | Deferred intentionally: the current runnable foundation stabilizes the in-memory adapter first; Kuzu remains the next adapter after this contract is exercised. |
+| 6 | Create CLI skeleton. | `done` | Added the `dust-graph` Typer entry point with `validate-fixture` and `import-fixture` commands in `src/dust_graph/cli.py`. |
+| 7 | Add sample fixture format. | `done` | Added `fixtures/sample_graph.yaml`, a YAML fixture with graph metadata, nodes, edges, properties, and evidence. |
+| 8 | Add one sample import command design. | `done` | Implemented `dust-graph import-fixture fixtures/sample_graph.yaml`, which loads a fixture into the in-memory adapter and reports imported counts. |
+| 9 | Add one sample query design. | `done` | Added deterministic in-memory named queries: `nodes`, `edges`, and `neighbors`; tests cover the `nodes` query result shape. |
+| 10 | Add documentation for how future tasks should update task-plan files. | `done` | This plan keeps the task-plan update guidance below and now includes concrete evidence notes when tasks are marked `done`. |
 
 ## Status Table
 
 | State | Meaning | M1 Usage |
 | --- | --- | --- |
-| `pending` | Work is planned but has not started. | Initial state for every M1 task in this plan. |
+| `pending` | Work is planned but has not started. | Use for planned work that has not started, including intentionally deferred follow-up tasks. |
 | `in_progress` | Work has started and is not complete. | Use for the single active implementation slice whenever possible. |
 | `done` | Work is complete and has supporting evidence. | Use only after code, docs, fixtures, and checks for the task are complete. |
 
@@ -48,6 +48,10 @@ Future tasks should update task-plan files as part of the same change that perfo
 - Add short evidence notes or links to changed files when marking a task `done`.
 - Add newly discovered work as a new `pending` task instead of silently expanding an existing task.
 - Keep milestone boundaries aligned with `docs/BLUEPRINT.md`; update the blueprint first if the work expands beyond the milestone scope.
+
+## Next Adapter Note
+
+Kuzu should be introduced after the in-memory adapter has enough exercised behavior to define a stable persistence contract. The first Kuzu task should implement the existing `GraphAdapter` protocol rather than changing callers to depend on Kuzu-specific APIs.
 
 ## Out of Scope
 
